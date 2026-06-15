@@ -460,7 +460,8 @@
       const attendanceMatrix = useMemo(() => {
         const dict = {};
         students.forEach(s => {
-          const dt = s.Date ? s.Date.split('T')[0] : '';
+          const dateObj = new Date(s.Date);
+          const dt = !isNaN(dateObj) ? `${dateObj.getFullYear()}-${String(dateObj.getMonth() + 1).padStart(2, '0')}-${String(dateObj.getDate()).padStart(2, '0')}` : '';
           const key = `${s.Branch}|${dt}|${s['Jam/Section']}|${s.Level}|${s['Trainer Name']}`;
           dict[key] = s['Murid Hadir'];
         });
@@ -489,7 +490,8 @@
       const suppliesMatrix = useMemo(() => {
         const dict = {};
         supplies.forEach(s => {
-          const dt = s.Date ? s.Date.split('T')[0] : '';
+          const dateObj = new Date(s.Date);
+          const dt = !isNaN(dateObj) ? `${dateObj.getFullYear()}-${String(dateObj.getMonth() + 1).padStart(2, '0')}-${String(dateObj.getDate()).padStart(2, '0')}` : '';
           const key = `${s.Branch}|${dt}|${s['Jam/Section']}|${s.Level}|${s['Trainer Name']}`;
           dict[key] = { p: s['Paper Used'], pr: s['Printing Used'] };
         });
