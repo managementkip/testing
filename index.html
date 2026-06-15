@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Login - GAS Management System</title>
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <style>
+    body {
+      font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    .fade-in { animation: fadeIn 0.7s ease both; }
+    .slide-up { animation: slideUp 0.65s ease both; }
+    .float-soft { animation: floatSoft 5s ease-in-out infinite; }
+
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+
+    @keyframes slideUp {
+      from { opacity: 0; transform: translateY(20px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes floatSoft {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-10px); }
+    }
+  </style>
+</head>
+
+<body class="bg-slate-950 text-slate-100 overflow-hidden selection:bg-blue-500/30">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    // TODO: Paste your deployed GAS Web App URL here
+    const GAS_WEB_APP_URL = 'https://script.google.com/macros/s/YOUR_SCRIPT_ID/exec'; 
+    const SESSION_KEY = 'gas_auth_token';
+
+    /**
+     * Standardized fetch wrapper to communicate with the GAS backend.
+     * Uses POST with text/plain to avoid CORS preflight issues on GitHub Pages.
+     */
+    async function fetchAPI(action, payload = {}) {
+      try {
+        const response = await fetch(GAS_WEB_APP_URL, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'text/plain;charset=utf-8', 
+          },
+          body: JSON.stringify({ action, payload })
+        });
+        
+        if (!response.ok) {
+          throw new Error('Network response was not ok');
+        }
+        
+        return await response.json();
+      } catch (error) {
+        console.error(`API Error (${action}):`, error);
+        throw error;
+      }
+    }
+
+    function App() {
+      const [username, setUsername] = useState('');
+      const [password, setPassword] = useState('');
+      const [loading, setLoading] = useState(false);
+      const [initialLoading, setInitialLoading] = useState(true);
+      const [error, setError] = useState('');
+
+      useEffect(() => {
+        checkActiveSession();
+      }, []);
+
+      async function checkActiveSession() {
+        try {
+          const token = localStorage.getItem(SESSION_KEY);
+
+          if (!token) {
+            setInitialLoading(false);
+            return;
+          }
+
+          // Updated API Call
+          const response = await fetchAPI('checkSession', { token });
+
+          if (response && response.success && response.redirectPage) {
+            // Redirect to static local HTML file in GitHub
+            window.location.href = `${response.redirectPage}.html`;
+            return;
+          }
+
+          localStorage.removeItem(SESSION_KEY);
+          setInitialLoading(false);
+
+        } catch (err) {
+          console.warn('Session check failed', err);
+          localStorage.removeItem(SESSION_KEY);
+          setInitialLoading(false);
+        }
+      }
+
+      async function handleLogin(e) {
+        e.preventDefault();
+
+        if (!username || !password) {
+          setError('Username dan password wajib diisi.');
+          return;
+        }
+
+        setError('');
+        setLoading(true);
+
+        try {
+          // Updated API Call
+          const response = await fetchAPI('loginUser', { username, password });
+
+          if (response && response.success) {
+            localStorage.setItem(SESSION_KEY, response.token);
+
+            if (response.redirectPage) {
+              // Redirect to static local HTML file in GitHub
+              window.location.href = `${response.redirectPage}.html`;
+            } else {
+              setError('Terjadi kesalahan routing. Hubungi admin.');
+              setLoading(false);
+            }
+          } else {
+            setError(response.message || 'Login gagal.');
+            setLoading(false);
+          }
+        } catch (err) {
+          setError('Terjadi error saat menghubungi server.');
+          setLoading(false);
+        }
+      }
+
+      if (initialLoading) {
+        return (
+          <div className="min-h-screen flex items-center justify-center">
+            <div className="text-center fade-in">
+              <div className="w-12 h-12 border-4 rounded-full animate-spin border-white/20 border-t-white mx-auto mb-4"></div>
+              <p className="text-white/60 text-sm">Checking session...</p>
+            </div>
+          </div>
+        );
+      }
+
+      return (
+        <div className="relative min-h-screen flex items-center justify-center p-4">
+          
+          <div className="absolute inset-0 pointer-events-none overflow-hidden">
+            <div className="absolute -top-[20%] -left-[10%] w-[50%] h-[50%] rounded-full bg-blue-600/20 blur-[120px] mix-blend-screen float-soft"></div>
+            <div className="absolute top-[60%] -right-[10%] w-[40%] h-[60%] rounded-full bg-emerald-600/10 blur-[120px] mix-blend-screen float-soft" style={{ animationDelay: '-2s' }}></div>
+            <div className="absolute top-[20%] left-[40%] w-[30%] h-[30%] rounded-full bg-purple-600/10 blur-[100px] mix-blend-screen float-soft" style={{ animationDelay: '-4s' }}></div>
+          </div>
+
+          <main className="relative w-full max-w-5xl grid grid-cols-1 lg:grid-cols-2 gap-12 lg:gap-24 items-center">
+            
+            <div className="hidden lg:block slide-up" style={{ animationDelay: '0.1s' }}>
+              <div className="mb-8">
+                <div className="w-14 h-14 bg-white rounded-3xl flex items-center justify-center mb-6 shadow-2xl shadow-white/10">
+                  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#020617" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M12 2 9.5 9.5 2 12l7.5 2.5L12 22l2.5-7.5L22 12l-7.5-2.5L12 2Z" />
+                  </svg>
+                </div>
+                <h1 className="text-5xl font-black tracking-tight leading-tight mb-4">
+                  Management <br />
+                  <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-emerald-400">
+                    System Hub.
+                  </span>
+                </h1>
+                <p className="text-lg text-white/60 leading-relaxed max-w-md">
+                  Centralized platform untuk mengelola absensi kelas, tracking supply inventory, dan memonitor aktivitas Team Leader secara real-time.
+                </p>
+              </div>
+
+              <div className="flex gap-3">
+                <RoleBadge label="Admin" />
+                <RoleBadge label="Team Leader" />
+                <RoleBadge label="Management" />
+              </div>
+            </div>
+
+            <div className="w-full max-w-md mx-auto lg:mx-0 slide-up" style={{ animationDelay: '0.2s' }}>
+              
+              <section className="relative group">
+                <div className="absolute inset-0 bg-gradient-to-r from-blue-500/20 to-emerald-500/20 rounded-[2.5rem] blur-xl opacity-50 group-hover:opacity-70 transition duration-500"></div>
+                
+                <div className="relative bg-[#0b1120]/80 backdrop-blur-2xl border border-white/10 rounded-[2.5rem] p-8 sm:p-10 shadow-2xl">
+                  
+                  <div className="lg:hidden flex flex-col items-center mb-8 text-center">
+                    <div className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center mb-4 shadow-xl shadow-white/10">
+                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#020617" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M12 2 9.5 9.5 2 12l7.5 2.5L12 22l2.5-7.5L22 12l-7.5-2.5L12 2Z" />
+                      </svg>
+                    </div>
+                    <h2 className="text-2xl font-black tracking-tight">System Hub</h2>
+                  </div>
+
+                  <div className="mb-8">
+                    <h2 className="text-2xl font-black mb-2">Welcome back</h2>
+                    <p className="text-white/50 text-sm">Silakan login untuk mengakses dashboard kamu.</p>
+                  </div>
+
+                  {error && (
+                    <div className="mb-6 p-4 rounded-2xl bg-red-500/10 border border-red-500/20 flex items-start gap-3 fade-in">
+                      <svg className="w-5 h-5 text-red-500 mt-0.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line>
+                      </svg>
+                      <p className="text-sm text-red-400 font-medium leading-relaxed">{error}</p>
+                    </div>
+                  )}
+
+                  <form onSubmit={handleLogin} className="space-y-5">
+                    <div>
+                      <label className="block text-sm font-semibold text-white/70 mb-2 pl-1">
+                        Username
+                      </label>
+                      <input
+                        type="text"
+                        value={username}
+                        onChange={(e) => setUsername(e.target.value)}
+                        disabled={loading}
+                        className="w-full h-12 rounded-2xl bg-black/40 border border-white/10 text-white px-4 outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/50 transition disabled:opacity-50"
+                        placeholder="Enter your username"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-semibold text-white/70 mb-2 pl-1">
+                        Password
+                      </label>
+                      <input
+                        type="password"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        disabled={loading}
+                        className="w-full h-12 rounded-2xl bg-black/40 border border-white/10 text-white px-4 outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/50 transition disabled:opacity-50"
+                        placeholder="••••••••"
+                      />
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={loading}
+                      className="w-full h-12 mt-4 rounded-2xl bg-white text-slate-950 font-black tracking-wide hover:bg-slate-200 active:scale-[0.98] transition-all disabled:opacity-70 disabled:cursor-not-allowed flex items-center justify-center"
+                    >
+                      {loading ? (
+                        <div className="w-5 h-5 border-2 border-slate-950/20 border-t-slate-950 rounded-full animate-spin"></div>
+                      ) : (
+                        'Login'
+                      )}
+                    </button>
+                  </form>
+                </div>
+              </section>
+
+            </div>
+          </main>
+        </div>
+      );
+    }
+
+    function RoleBadge({ label }) {
+      return (
+        <div className="rounded-2xl bg-white/10 border border-white/10 px-4 py-3 text-center">
+          <p className="text-white text-sm font-semibold">{label}</p>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
