@@ -1,0 +1,1056 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Management Dashboard</title>
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <style>
+    :root {
+      --dock-bottom: max(18px, env(safe-area-inset-bottom));
+    }
+
+    * {
+      -webkit-tap-highlight-color: transparent;
+      transition:
+        background-color 420ms ease,
+        color 420ms ease,
+        border-color 420ms ease,
+        box-shadow 420ms ease,
+        opacity 260ms ease;
+    }
+
+    body {
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    .fade-in { animation: fadeIn 0.45s ease both; }
+    .slide-up { animation: slideUp 0.5s ease both; }
+    .dock-pop { animation: dockPop 0.45s cubic-bezier(.2,.9,.2,1.2) both; }
+    .modal-pop { animation: modalPop 0.28s cubic-bezier(.2,.9,.2,1.1) both; }
+    .toast-in { animation: toastIn 0.32s ease both; }
+    .theme-switching { pointer-events: none; }
+
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+
+    @keyframes slideUp {
+      from { opacity: 0; transform: translateY(18px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes dockPop {
+      from { opacity: 0; transform: translateY(20px) scale(.96); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+
+    @keyframes modalPop {
+      from { opacity: 0; transform: translateY(18px) scale(.96); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+
+    @keyframes toastIn {
+      from { opacity: 0; transform: translateY(14px) scale(.98); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+
+    input, select, textarea { color-scheme: light; }
+    .dark input, .dark select, .dark textarea { color-scheme: dark; }
+
+    .glass-light {
+      background: rgba(255,255,255,.74);
+      backdrop-filter: blur(24px);
+      -webkit-backdrop-filter: blur(24px);
+    }
+
+    .glass-dark {
+      background: rgba(15,23,42,.74);
+      backdrop-filter: blur(24px);
+      -webkit-backdrop-filter: blur(24px);
+    }
+
+    .dock-glass-light {
+      background: rgba(255,255,255,.78);
+      backdrop-filter: blur(28px) saturate(1.4);
+      -webkit-backdrop-filter: blur(28px) saturate(1.4);
+    }
+
+    .dock-glass-dark {
+      background: rgba(15,23,42,.80);
+      backdrop-filter: blur(28px) saturate(1.4);
+      -webkit-backdrop-filter: blur(28px) saturate(1.4);
+    }
+
+    .custom-scroll::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+
+    .custom-scroll::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    .custom-scroll::-webkit-scrollbar-thumb {
+      background: rgba(148, 163, 184, .45);
+      border-radius: 999px;
+    }
+
+    .custom-scroll::-webkit-scrollbar-thumb:hover {
+      background: rgba(148, 163, 184, .7);
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      .fade-in,
+      .slide-up,
+      .dock-pop,
+      .modal-pop,
+      .toast-in {
+        transition: none !important;
+        animation: none !important;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useEffect, useMemo, useState } = React;
+
+    // TODO: Paste your deployed GAS Web App URL here
+    const GAS_WEB_APP_URL = 'https://script.google.com/macros/s/YOUR_SCRIPT_ID/exec';
+
+    const SESSION_KEY = 'gas_auth_token';
+    const THEME_KEY = 'management_dashboard_theme';
+
+    const MONTH_NAMES = [
+      'January', 'February', 'March', 'April', 'May', 'June',
+      'July', 'August', 'September', 'October', 'November', 'December'
+    ];
+
+    const DEFAULT_ATTENDANCE_SETTINGS = { lowMax: 3, mediumMin: 4, mediumMax: 7, highMin: 8 };
+    const DEFAULT_SUPPLY_SETTINGS = { lowMax: 50, mediumMin: 51, mediumMax: 100, highMin: 101 };
+
+    /**
+     * Standardized fetch wrapper to communicate with the GAS backend.
+     */
+    async function fetchAPI(action, payload = {}) {
+      try {
+        const response = await fetch(GAS_WEB_APP_URL, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'text/plain;charset=utf-8',
+          },
+          body: JSON.stringify({ action, payload })
+        });
+        
+        if (!response.ok) throw new Error('Network response was not ok');
+        return await response.json();
+      } catch (error) {
+        console.error(`API Error (${action}):`, error);
+        throw error;
+      }
+    }
+
+    function App() {
+      const today = new Date();
+      const todayString = new Date().toISOString().slice(0, 10);
+
+      const [theme, setTheme] = useState(localStorage.getItem(THEME_KEY) || 'dark');
+      const [activeMenu, setActiveMenu] = useState('dashboard');
+      const [user, setUser] = useState(null);
+      const [loading, setLoading] = useState(true);
+      const [saving, setSaving] = useState(false);
+      const [accessError, setAccessError] = useState('');
+
+      const [toast, setToast] = useState(null);
+      const [confirmDialog, setConfirmDialog] = useState(null);
+
+      // Global Data State
+      const [branches, setBranches] = useState([]);
+      const [classes, setClasses] = useState([]);
+      const [inventory, setInventory] = useState([]);
+      
+      // Dashboard Matrix State
+      const [dashboardMonth, setDashboardMonth] = useState(today.getMonth() + 1);
+      const [dashboardYear, setDashboardYear] = useState(today.getFullYear());
+      const [dashboardStudents, setDashboardStudents] = useState([]);
+      const [dashboardSupplies, setDashboardSupplies] = useState([]);
+
+      // Task Tracker State
+      const [trackerDate, setTrackerDate] = useState(todayString);
+      const [trackerData, setTrackerData] = useState([]);
+      const [trackerLoading, setTrackerLoading] = useState(false);
+
+      // Data Viewers State
+      const [users, setUsers] = useState([]);
+      const [tasks, setTasks] = useState([]);
+
+      const isDark = theme === 'dark';
+
+      useEffect(() => {
+        document.documentElement.classList.toggle('dark', isDark);
+        localStorage.setItem(THEME_KEY, theme);
+      }, [theme]);
+
+      useEffect(() => {
+        boot();
+      }, []);
+
+      useEffect(() => {
+        if (user && activeMenu === 'dashboard') {
+          loadDashboardMatrices(null, dashboardMonth, dashboardYear);
+        } else if (user && activeMenu === 'users') {
+          loadUsers();
+        } else if (user && activeMenu === 'tasks') {
+          loadTasks();
+        }
+      }, [activeMenu, dashboardMonth, dashboardYear]);
+
+      function smoothToggleTheme() {
+        document.body.classList.add('theme-switching');
+        setTheme(prev => prev === 'dark' ? 'light' : 'dark');
+        setTimeout(() => {
+          document.body.classList.remove('theme-switching');
+        }, 450);
+      }
+
+      function showToast(type, text) {
+        setToast({ type, text });
+        setTimeout(() => setToast(null), 3400);
+      }
+      function showSuccess(text) { showToast('success', text); }
+      function showError(text) { showToast('error', text); }
+
+      function openConfirm(config) {
+        setConfirmDialog({
+          title: config.title || 'Are you sure?',
+          message: config.message || 'This action needs confirmation.',
+          confirmText: config.confirmText || 'Confirm',
+          cancelText: config.cancelText || 'Cancel',
+          tone: config.tone || 'danger',
+          onConfirm: config.onConfirm,
+        });
+      }
+      function closeConfirm() { setConfirmDialog(null); }
+
+      async function boot() {
+        setLoading(true);
+        try {
+          const token = localStorage.getItem(SESSION_KEY);
+          if (!token) return redirectToLogin();
+
+          const sessionResponse = await fetchAPI('getUserSession', { token });
+          if (!sessionResponse.success) {
+            localStorage.removeItem(SESSION_KEY);
+            return redirectToLogin();
+          }
+
+          if (sessionResponse.user.role !== 'Management') {
+            setAccessError('Akses ditolak. Halaman ini hanya untuk Management.');
+            setLoading(false);
+            return;
+          }
+
+          setUser(sessionResponse.user);
+
+          // Initial load core data
+          const [branchRes, classRes, invRes] = await Promise.all([
+            fetchAPI('getManagementBranches', { token }),
+            fetchAPI('getClassDetails', { token }),
+            fetchAPI('getInventoryDetails', { token })
+          ]);
+
+          if (branchRes.success) setBranches(branchRes.data);
+          if (classRes.success) setClasses(classRes.data);
+          if (invRes.success) setInventory(invRes.data);
+
+          await loadDashboardMatrices(token, dashboardMonth, dashboardYear);
+
+        } catch (err) {
+          setAccessError('Gagal memuat Management Dashboard.');
+        } finally {
+          setLoading(false);
+        }
+      }
+
+      function redirectToLogin() {
+        window.location.href = 'index.html';
+      }
+
+      async function handleLogout() {
+        closeConfirm();
+        try {
+          const token = localStorage.getItem(SESSION_KEY);
+          await fetchAPI('logoutUser', { token });
+        } catch (err) {
+          console.error(err);
+        }
+        localStorage.removeItem(SESSION_KEY);
+        redirectToLogin();
+      }
+
+      // -- MATRIX LOADING LOGIC --
+      async function loadDashboardMatrices(tokenParam, month, year) {
+        const token = tokenParam || localStorage.getItem(SESSION_KEY);
+        const filters = { month, year };
+        
+        try {
+          const [studentsRes, suppliesRes] = await Promise.all([
+            fetchAPI('getManagementStudents', { token, filters }),
+            fetchAPI('getManagementSupplies', { token, filters })
+          ]);
+
+          if (studentsRes.success) setDashboardStudents(studentsRes.data);
+          if (suppliesRes.success) setDashboardSupplies(suppliesRes.data);
+        } catch (err) {
+          showError('Gagal memuat data matriks dashboard.');
+        }
+      }
+
+      // -- TRACKER LOADING LOGIC --
+      async function loadTrackerData(date) {
+        setTrackerLoading(true);
+        try {
+          const token = localStorage.getItem(SESSION_KEY);
+          const response = await fetchAPI('getManagementActivityTracker', { token, date });
+          
+          if (response.success) {
+            setTrackerData(response.data);
+          } else {
+            showError(response.message || 'Gagal memuat data tracker.');
+          }
+        } catch (err) {
+          showError('Error saat menghubungi tracker.');
+        } finally {
+          setTrackerLoading(false);
+        }
+      }
+
+      // -- USERS CRUD --
+      async function loadUsers() {
+        const token = localStorage.getItem(SESSION_KEY);
+        const response = await fetchAPI('getAuthUsers', { token });
+        if (response.success) setUsers(response.data);
+      }
+
+      // -- TASKS CRUD --
+      async function loadTasks() {
+        const token = localStorage.getItem(SESSION_KEY);
+        const response = await fetchAPI('getTeamLeaderActivityTasks', { token, filters: { includeInactive: true } });
+        if (response.success) setTasks(response.data);
+      }
+
+      const pageClass = isDark
+        ? 'dark min-h-screen bg-[#020617] text-white'
+        : 'min-h-screen bg-slate-100 text-slate-950';
+
+      if (loading) {
+        return (
+          <div className={pageClass}>
+            <div className="min-h-screen flex items-center justify-center">
+              <div className="w-12 h-12 border-4 rounded-full animate-spin border-white/20 border-t-white mx-auto"></div>
+            </div>
+          </div>
+        );
+      }
+
+      if (accessError && !user) {
+        return (
+          <div className={pageClass}>
+            <div className="min-h-screen flex items-center justify-center px-4">
+              <div className={cardClass(isDark) + ' max-w-md w-full rounded-3xl p-6 text-center'}>
+                <h1 className="text-xl font-black mb-2">Access Error</h1>
+                <p className="text-red-500 text-sm mb-5">{accessError}</p>
+                <button onClick={() => redirectToLogin()} className={primaryButtonClass(isDark)}>Back to Login</button>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      return (
+        <div className={pageClass}>
+          <BackgroundGlow isDark={isDark} />
+
+          <div className="relative min-h-screen pb-32">
+            <Header user={user} isDark={isDark} theme={theme} onToggleTheme={smoothToggleTheme} onLogout={() => openConfirm({title: 'Logout?', onConfirm: handleLogout})} />
+
+            <main className="max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
+              {activeMenu === 'dashboard' && (
+                <DashboardMatrixView 
+                  isDark={isDark} 
+                  month={dashboardMonth} 
+                  year={dashboardYear} 
+                  setMonth={setDashboardMonth} 
+                  setYear={setDashboardYear}
+                  classes={classes}
+                  inventory={inventory}
+                  students={dashboardStudents}
+                  supplies={dashboardSupplies}
+                  branches={branches}
+                />
+              )}
+
+              {activeMenu === 'tasks' && (
+                <TasksView 
+                  isDark={isDark}
+                  tasks={tasks}
+                  loadTasks={loadTasks}
+                  trackerDate={trackerDate}
+                  setTrackerDate={setTrackerDate}
+                  trackerData={trackerData}
+                  trackerLoading={trackerLoading}
+                  loadTrackerData={() => loadTrackerData(trackerDate)}
+                  openConfirm={openConfirm}
+                  closeConfirm={closeConfirm}
+                  showSuccess={showSuccess}
+                  showError={showError}
+                  saving={saving}
+                  setSaving={setSaving}
+                />
+              )}
+
+              {activeMenu === 'users' && (
+                <UsersView 
+                  isDark={isDark}
+                  users={users}
+                  loadUsers={loadUsers}
+                  branches={branches}
+                  openConfirm={openConfirm}
+                  closeConfirm={closeConfirm}
+                  showSuccess={showSuccess}
+                  showError={showError}
+                  saving={saving}
+                  setSaving={setSaving}
+                />
+              )}
+
+              {activeMenu === 'profile' && (
+                <ProfileView isDark={isDark} user={user} />
+              )}
+            </main>
+
+            <MacDock isDark={isDark} activeMenu={activeMenu} setActiveMenu={setActiveMenu} />
+            <Toast toast={toast} isDark={isDark} />
+            <ConfirmDialog dialog={confirmDialog} isDark={isDark} onClose={closeConfirm} />
+          </div>
+        </div>
+      );
+    }
+
+    // ==========================================
+    // DASHBOARD MATRIX VIEW (1-31)
+    // ==========================================
+    function DashboardMatrixView({ isDark, month, year, setMonth, setYear, classes, inventory, students, supplies, branches }) {
+      const [tab, setTab] = useState('attendance');
+      const daysInMonth = new Date(year, month, 0).getDate();
+      const daysArray = Array.from({ length: daysInMonth }, (_, i) => i + 1);
+
+      // Build Attendance Matrix
+      const attendanceMatrix = useMemo(() => {
+        const dict = {};
+        students.forEach(s => {
+          const dt = s.Date ? s.Date.split('T')[0] : '';
+          const key = `${s.Branch}|${dt}|${s['Jam/Section']}|${s.Level}|${s['Trainer Name']}`;
+          dict[key] = s['Murid Hadir'];
+        });
+
+        const grouped = {};
+        branches.forEach(b => grouped[b] = []);
+
+        classes.filter(c => c.Status === 'Active').forEach(c => {
+          if (!grouped[c.Branch]) grouped[c.Branch] = [];
+          
+          const rowDays = daysArray.map(day => {
+            const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+            const key = `${c.Branch}|${dateStr}|${c['Jam/Section']}|${c.Level}|${c['Trainer Name']}`;
+            return { day, val: dict[key] !== undefined ? dict[key] : '-' };
+          });
+
+          const total = rowDays.reduce((sum, d) => sum + (d.val !== '-' ? Number(d.val) : 0), 0);
+          
+          grouped[c.Branch].push({ ...c, rowDays, total });
+        });
+
+        return grouped;
+      }, [students, classes, branches, month, year, daysArray]);
+
+      // Build Supplies Matrix
+      const suppliesMatrix = useMemo(() => {
+        const dict = {};
+        supplies.forEach(s => {
+          const dt = s.Date ? s.Date.split('T')[0] : '';
+          const key = `${s.Branch}|${dt}|${s['Jam/Section']}|${s.Level}|${s['Trainer Name']}`;
+          dict[key] = { p: s['Paper Used'], pr: s['Printing Used'] };
+        });
+
+        const grouped = {};
+        branches.forEach(b => grouped[b] = []);
+
+        inventory.filter(i => i.Status === 'Active').forEach(item => {
+          if (!grouped[item.Branch]) grouped[item.Branch] = [];
+          
+          const rowDays = daysArray.map(day => {
+            const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+            const key = `${item.Branch}|${dateStr}|${item['Jam/Section']}|${item.Level}|${item['Trainer Name']}`;
+            const val = dict[key];
+            return { 
+              day, 
+              label: val ? `${val.p}/${val.pr}` : '-', 
+              total: val ? Number(val.p) + Number(val.pr) : 0 
+            };
+          });
+
+          const totalP = rowDays.reduce((sum, d) => sum + (d.label !== '-' ? Number(d.label.split('/')[0]) : 0), 0);
+          const totalPr = rowDays.reduce((sum, d) => sum + (d.label !== '-' ? Number(d.label.split('/')[1]) : 0), 0);
+
+          grouped[item.Branch].push({ ...item, rowDays, totalP, totalPr });
+        });
+
+        return grouped;
+      }, [supplies, inventory, branches, month, year, daysArray]);
+
+      function isWeekend(day) {
+        const d = new Date(year, month - 1, day).getDay();
+        return d === 0 || d === 6;
+      }
+
+      return (
+        <section className="space-y-6 slide-up">
+          <div className={cardClass(isDark) + ' rounded-3xl p-5 sm:p-6'}>
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <Icon name="chart" className="w-8 h-8" />
+                <div>
+                  <h2 className="text-xl font-black">Global Data Matrix</h2>
+                  <p className={mutedClass(isDark)}>1-31 day view tracking across all active branches.</p>
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="flex rounded-xl overflow-hidden border border-white/10">
+                  <button onClick={() => setTab('attendance')} className={`px-4 py-2 text-sm font-black transition ${tab === 'attendance' ? 'bg-blue-500 text-white' : isDark ? 'bg-white/5 text-white/50' : 'bg-slate-200 text-slate-500'}`}>Attendance</button>
+                  <button onClick={() => setTab('supplies')} className={`px-4 py-2 text-sm font-black transition ${tab === 'supplies' ? 'bg-blue-500 text-white' : isDark ? 'bg-white/5 text-white/50' : 'bg-slate-200 text-slate-500'}`}>Supplies</button>
+                </div>
+                <div className="w-32">
+                  <Select isDark={isDark} value={month} onChange={setMonth} options={MONTH_NAMES.map((m, i) => ({ value: i + 1, label: m }))} />
+                </div>
+                <div className="w-24">
+                  <Input isDark={isDark} type="number" value={year} onChange={setYear} />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {branches.map(branch => {
+            const data = tab === 'attendance' ? attendanceMatrix[branch] : suppliesMatrix[branch];
+            if (!data || data.length === 0) return null;
+
+            return (
+              <div key={branch} className={cardClass(isDark) + ' rounded-3xl p-5 sm:p-6 overflow-hidden'}>
+                <div className="flex items-center gap-2 mb-4">
+                  <span className="w-3 h-3 rounded-full bg-blue-500"></span>
+                  <h3 className="text-lg font-black tracking-wide uppercase">{branch}</h3>
+                </div>
+
+                <div className="max-h-[50vh] overflow-auto custom-scroll border border-white/5 rounded-xl">
+                  <table className="w-full min-w-[1200px] text-xs">
+                    <thead className={isDark ? 'sticky top-0 z-10 bg-slate-900/95 backdrop-blur-xl border-b border-white/10' : 'sticky top-0 z-10 bg-slate-100/95 backdrop-blur-xl border-b border-slate-200'}>
+                      <tr>
+                        <th className="sticky left-0 z-20 py-3 px-4 text-left min-w-[200px] bg-inherit shadow-[1px_0_0_0_rgba(255,255,255,0.05)]">Class / Item Info</th>
+                        {daysArray.map(d => (
+                          <th key={d} className={`py-3 px-2 text-center min-w-[45px] ${isWeekend(d) ? 'text-red-400' : ''}`}>{d}</th>
+                        ))}
+                        <th className="py-3 px-3 text-center font-black">Total</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.map((row, idx) => (
+                        <tr key={idx} className={isDark ? 'border-b border-white/5 hover:bg-white/5' : 'border-b border-slate-200 hover:bg-slate-50'}>
+                          <td className={`sticky left-0 z-10 py-3 px-4 shadow-[1px_0_0_0_rgba(255,255,255,0.05)] ${isDark ? 'bg-[#0b1120]' : 'bg-white'}`}>
+                            <p className="font-black">{row['Trainer Name']}</p>
+                            <p className="opacity-60 text-[10px]">{row['Jam/Section']} • {row.Level}</p>
+                          </td>
+                          {row.rowDays.map(d => (
+                            <td key={d.day} className={`py-2 px-1 text-center border-l ${isDark ? 'border-white/5' : 'border-slate-100'}`}>
+                              {tab === 'attendance' ? (
+                                <span className={getAttendanceColor(d.val)}>{d.val}</span>
+                              ) : (
+                                <span className={getSupplyColor(d.total, d.label)}>{d.label}</span>
+                              )}
+                            </td>
+                          ))}
+                          <td className="py-3 px-3 text-center font-black bg-blue-500/10 text-blue-500">
+                            {tab === 'attendance' ? row.total : `${row.totalP}/${row.totalPr}`}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            );
+          })}
+        </section>
+      );
+    }
+
+    // ==========================================
+    // TASKS & TRACKER VIEW
+    // ==========================================
+    function TasksView({ isDark, tasks, loadTasks, trackerDate, setTrackerDate, trackerData, trackerLoading, loadTrackerData, openConfirm, closeConfirm, showSuccess, showError, saving, setSaving }) {
+      const [tab, setTab] = useState('tracker');
+      const [modalOpen, setModalOpen] = useState(false);
+      const [editItem, setEditItem] = useState(null);
+
+      function handleSaveTask(payload) {
+        setSaving(true);
+        const token = localStorage.getItem(SESSION_KEY);
+        const action = editItem 
+          ? fetchAPI('updateTeamLeaderActivityTask', { token, id: editItem.ID, payload }) 
+          : fetchAPI('createTeamLeaderActivityTask', { token, payload });
+        
+        action.then(res => {
+          if (res.success) { showSuccess(res.message); setModalOpen(false); loadTasks(); }
+          else showError(res.message);
+        }).finally(() => setSaving(false));
+      }
+
+      return (
+        <section className="space-y-6 slide-up">
+          <div className={cardClass(isDark) + ' rounded-3xl p-5 sm:p-6'}>
+             <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <Icon name="activity" className="w-8 h-8" />
+                  <div>
+                    <h2 className="text-xl font-black">Team Leader Tasks & Tracker</h2>
+                    <p className={mutedClass(isDark)}>Manage master checklists or track daily shift progress.</p>
+                  </div>
+                </div>
+                <div className="flex rounded-xl overflow-hidden border border-white/10">
+                  <button onClick={() => setTab('tracker')} className={`px-4 py-2 text-sm font-black transition ${tab === 'tracker' ? 'bg-blue-500 text-white' : isDark ? 'bg-white/5 text-white/50' : 'bg-slate-200 text-slate-500'}`}>TL Progress Tracker</button>
+                  <button onClick={() => setTab('master')} className={`px-4 py-2 text-sm font-black transition ${tab === 'master' ? 'bg-blue-500 text-white' : isDark ? 'bg-white/5 text-white/50' : 'bg-slate-200 text-slate-500'}`}>Master Tasks</button>
+                </div>
+             </div>
+          </div>
+
+          {tab === 'tracker' && (
+            <div className="space-y-6">
+              <div className="flex flex-wrap items-end gap-3">
+                <div className="w-48"><Input isDark={isDark} label="Track Date" type="date" value={trackerDate} onChange={setTrackerDate} /></div>
+                <button onClick={loadTrackerData} disabled={trackerLoading} className={primaryButtonClass(isDark) + ' !w-auto px-6'}>
+                  {trackerLoading ? 'Scanning Sheets...' : 'Load Progress'}
+                </button>
+              </div>
+
+              {trackerData.length === 0 && !trackerLoading && (
+                <div className={cardClass(isDark) + ' p-10 text-center rounded-3xl opacity-60'}>Select a date and click Load Progress to scan TL Sheets.</div>
+              )}
+
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                {trackerData.map((t, idx) => (
+                  <div key={idx} className={cardClass(isDark) + ' rounded-3xl p-5 flex flex-col relative overflow-hidden'}>
+                    <div className="flex justify-between items-start mb-3">
+                      <div>
+                        <h3 className="font-black text-lg">{t.username}</h3>
+                        <p className={mutedClass(isDark)}>{t.branch} • {t.shift}</p>
+                      </div>
+                      <TrackerBadge status={t.status} />
+                    </div>
+
+                    {t.status === 'Active' && (
+                      <div className="mb-4">
+                        <div className="flex justify-between text-xs font-bold mb-1">
+                          <span>Task Progress</span>
+                          <span>{t.doneTasks} / {t.totalTasks}</span>
+                        </div>
+                        <div className={`h-2 rounded-full overflow-hidden ${isDark ? 'bg-white/10' : 'bg-slate-200'}`}>
+                          <div className="h-full bg-emerald-500 rounded-full transition-all" style={{width: t.totalTasks ? `${(t.doneTasks/t.totalTasks)*100}%` : '0%'}}></div>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className={`flex-1 rounded-2xl p-3 text-sm italic ${isDark ? 'bg-white/5 text-white/70' : 'bg-slate-100 text-slate-600'}`}>
+                      "{t.notes || 'No notes provided.'}"
+                    </div>
+                    {t.updatedAt && <p className="text-[10px] opacity-50 mt-2 text-right">Updated: {t.updatedAt}</p>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {tab === 'master' && (
+            <div className={cardClass(isDark) + ' rounded-3xl p-5 overflow-hidden'}>
+              <div className="flex justify-end mb-4">
+                <button onClick={() => { setEditItem(null); setModalOpen(true); }} className={primaryButtonClass(isDark) + ' !w-auto px-6'}>+ Add New Task</button>
+              </div>
+              <ResponsiveTable 
+                isDark={isDark}
+                headers={['Shift', 'Task Name', 'Description', 'Sort', 'Status', 'Action']}
+                rows={tasks.map(t => [
+                  t.Shift, t['Task Name'], 
+                  <span className="truncate max-w-[200px] block" title={t.Description}>{t.Description}</span>, 
+                  t['Sort Order'], 
+                  <span className={t.Status === 'Active' ? 'text-emerald-500 font-bold' : 'text-red-500'}>{t.Status}</span>,
+                  <div className="flex gap-2">
+                    <button onClick={() => { setEditItem(t); setModalOpen(true); }} className="px-3 py-1 bg-blue-500/20 text-blue-500 rounded-xl text-xs font-bold">Edit</button>
+                    {t.Status === 'Active' && (
+                      <button onClick={() => openConfirm({title:'Disable Task?', onConfirm: async () => {
+                        closeConfirm(); setSaving(true);
+                        const res = await fetchAPI('deleteTeamLeaderActivityTask', { token: localStorage.getItem(SESSION_KEY), id: t.ID });
+                        if(res.success){ showSuccess(res.message); loadTasks(); } else showError(res.message);
+                        setSaving(false);
+                      }})} className="px-3 py-1 bg-red-500/20 text-red-500 rounded-xl text-xs font-bold">Disable</button>
+                    )}
+                  </div>
+                ])}
+                emptyText="No master tasks defined."
+              />
+            </div>
+          )}
+
+          {modalOpen && (
+            <TaskModal isDark={isDark} onClose={() => setModalOpen(false)} onSave={handleSaveTask} item={editItem} saving={saving} />
+          )}
+        </section>
+      );
+    }
+
+    function TrackerBadge({ status }) {
+      const config = {
+        'Active': 'bg-emerald-500/20 text-emerald-500 border-emerald-500/30',
+        'No Sheet': 'bg-red-500/20 text-red-500 border-red-500/30',
+        'Error': 'bg-red-500/20 text-red-500 border-red-500/30',
+        'No Activity': 'bg-amber-500/20 text-amber-500 border-amber-500/30'
+      };
+      return <span className={`px-3 py-1 rounded-full text-xs font-black border ${config[status] || config['No Activity']}`}>{status}</span>;
+    }
+
+    function TaskModal({ isDark, onClose, onSave, item, saving }) {
+      const [form, setForm] = useState(item ? {
+        shift: item.Shift, taskName: item['Task Name'], description: item.Description, sortOrder: item['Sort Order'], status: item.Status
+      } : { shift: 'General', taskName: '', description: '', sortOrder: '0', status: 'Active' });
+
+      return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4 bg-black/60 backdrop-blur-sm">
+          <div className={cardClass(isDark) + ' w-full max-w-lg rounded-3xl p-6 modal-pop'}>
+            <h3 className="text-xl font-black mb-5">{item ? 'Edit Task' : 'New Task'}</h3>
+            <div className="space-y-4">
+              <Select isDark={isDark} label="Shift Target" value={form.shift} onChange={v => setForm({...form, shift: v})} options={[
+                {value: 'General', label: 'General / All'}, {value: 'Shift 1', label: 'Shift 1'}, {value: 'Shift 2', label: 'Shift 2'}, {value: 'Shift 3', label: 'Shift 3'}
+              ]} />
+              <Input isDark={isDark} label="Task Name" value={form.taskName} onChange={v => setForm({...form, taskName: v})} />
+              <Textarea isDark={isDark} label="Description" value={form.description} onChange={v => setForm({...form, description: v})} />
+              <div className="grid grid-cols-2 gap-4">
+                <Input isDark={isDark} label="Sort Order" type="number" value={form.sortOrder} onChange={v => setForm({...form, sortOrder: v})} />
+                <Select isDark={isDark} label="Status" value={form.status} onChange={v => setForm({...form, status: v})} options={[{value:'Active',label:'Active'},{value:'Inactive',label:'Inactive'}]} />
+              </div>
+            </div>
+            <div className="flex gap-3 mt-6">
+              <button onClick={onClose} className={secondaryButtonClass(isDark) + ' flex-1'}>Cancel</button>
+              <button onClick={() => onSave(form)} disabled={saving} className={primaryButtonClass(isDark) + ' flex-1'}>{saving ? 'Saving...' : 'Save'}</button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ==========================================
+    // USERS VIEW
+    // ==========================================
+    function UsersView({ isDark, users, loadUsers, branches, openConfirm, closeConfirm, showSuccess, showError, saving, setSaving }) {
+      const [modalOpen, setModalOpen] = useState(false);
+      const [editItem, setEditItem] = useState(null);
+
+      function handleSaveUser(payload) {
+        setSaving(true);
+        const token = localStorage.getItem(SESSION_KEY);
+        const action = editItem 
+          ? fetchAPI('updateAuthUser', { token, username: editItem.Username, payload }) 
+          : fetchAPI('createAuthUser', { token, payload });
+        
+        action.then(res => {
+          if (res.success) { showSuccess(res.message); setModalOpen(false); loadUsers(); }
+          else showError(res.message);
+        }).finally(() => setSaving(false));
+      }
+
+      return (
+        <section className={cardClass(isDark) + ' rounded-3xl p-5 sm:p-6 slide-up'}>
+          <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center gap-3">
+              <Icon name="user" className="w-8 h-8" />
+              <div>
+                <h2 className="text-xl font-black">User Management</h2>
+                <p className={mutedClass(isDark)}>Manage access for Admins, Team Leaders, and Management.</p>
+              </div>
+            </div>
+            <button onClick={() => { setEditItem(null); setModalOpen(true); }} className={primaryButtonClass(isDark) + ' !w-auto px-6'}>+ Add User</button>
+          </div>
+
+          <ResponsiveTable 
+            isDark={isDark}
+            headers={['Username', 'Role', 'Branch', 'Status', 'Action']}
+            rows={users.map(u => [
+              u.Username, 
+              <span className="font-bold">{u.Role}</span>, 
+              u.Branch || 'All', 
+              <span className={u.Status === 'Active' ? 'text-emerald-500 font-bold' : 'text-red-500'}>{u.Status}</span>,
+              <div className="flex gap-2">
+                <button onClick={() => { setEditItem(u); setModalOpen(true); }} className="px-3 py-1 bg-blue-500/20 text-blue-500 rounded-xl text-xs font-bold">Edit</button>
+                <button onClick={() => openConfirm({title:'Delete User?', onConfirm: async () => {
+                  closeConfirm(); setSaving(true);
+                  const res = await fetchAPI('deleteAuthUser', { token: localStorage.getItem(SESSION_KEY), username: u.Username });
+                  if(res.success){ showSuccess(res.message); loadUsers(); } else showError(res.message);
+                  setSaving(false);
+                }})} className="px-3 py-1 bg-red-500/20 text-red-500 rounded-xl text-xs font-bold">Delete</button>
+              </div>
+            ])}
+            emptyText="No users found."
+          />
+
+          {modalOpen && (
+            <UserModal isDark={isDark} onClose={() => setModalOpen(false)} onSave={handleSaveUser} item={editItem} branches={branches} saving={saving} />
+          )}
+        </section>
+      );
+    }
+
+    function UserModal({ isDark, onClose, onSave, item, branches, saving }) {
+      const [form, setForm] = useState(item ? {
+        username: item.Username, password: item.Password, role: item.Role, branch: item.Branch, status: item.Status
+      } : { username: '', password: '', role: 'Team Leader', branch: branches[0] || 'Pontianak', status: 'Active' });
+
+      return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4 bg-black/60 backdrop-blur-sm">
+          <div className={cardClass(isDark) + ' w-full max-w-lg rounded-3xl p-6 modal-pop'}>
+            <h3 className="text-xl font-black mb-5">{item ? 'Edit User' : 'New User'}</h3>
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <Input isDark={isDark} label="Username" value={form.username} onChange={v => setForm({...form, username: v})} disabled={!!item} />
+                <Input isDark={isDark} label="Password" type="text" value={form.password} onChange={v => setForm({...form, password: v})} />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <Select isDark={isDark} label="Role" value={form.role} onChange={v => setForm({...form, role: v})} options={[
+                  {value: 'Admin', label: 'Admin'}, {value: 'Team Leader', label: 'Team Leader'}, {value: 'Management', label: 'Management'}
+                ]} />
+                <Select isDark={isDark} label="Status" value={form.status} onChange={v => setForm({...form, status: v})} options={[
+                  {value: 'Active', label: 'Active'}, {value: 'Inactive', label: 'Inactive'}
+                ]} />
+              </div>
+              {form.role !== 'Management' && (
+                <Input isDark={isDark} label="Branch" value={form.branch} onChange={v => setForm({...form, branch: v})} />
+              )}
+            </div>
+            <div className="flex gap-3 mt-6">
+              <button onClick={onClose} className={secondaryButtonClass(isDark) + ' flex-1'}>Cancel</button>
+              <button onClick={() => onSave(form)} disabled={saving} className={primaryButtonClass(isDark) + ' flex-1'}>{saving ? 'Saving...' : 'Save'}</button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ==========================================
+    // HELPER COMPONENTS & UTILS
+    // ==========================================
+    function ProfileView({ isDark, user }) {
+      return (
+        <section className={cardClass(isDark) + ' rounded-3xl p-6 slide-up max-w-2xl mx-auto mt-10'}>
+          <div className="flex items-center gap-4 mb-6">
+            <div className={`w-16 h-16 rounded-3xl flex items-center justify-center ${isDark ? 'bg-white text-slate-950' : 'bg-slate-950 text-white'}`}>
+              <Icon name="user" className="w-8 h-8" />
+            </div>
+            <div>
+              <h2 className="text-xl font-black">{user?.username}</h2>
+              <p className={mutedClass(isDark)}>{user?.role} • Global Access</p>
+            </div>
+          </div>
+        </section>
+      );
+    }
+
+    function getAttendanceColor(val) {
+      if (val === '-' || val === '') return 'inline-flex min-w-7 h-7 items-center justify-center rounded bg-slate-500/10 text-slate-400 text-[10px] font-black';
+      const num = Number(val);
+      if (num <= DEFAULT_ATTENDANCE_SETTINGS.lowMax) return 'inline-flex min-w-7 h-7 items-center justify-center rounded bg-red-500/20 text-red-500 text-[10px] font-black';
+      if (num >= DEFAULT_ATTENDANCE_SETTINGS.highMin) return 'inline-flex min-w-7 h-7 items-center justify-center rounded bg-emerald-500/20 text-emerald-500 text-[10px] font-black';
+      return 'inline-flex min-w-7 h-7 items-center justify-center rounded bg-amber-500/20 text-amber-500 text-[10px] font-black';
+    }
+
+    function getSupplyColor(total, label) {
+      if (label === '-' || label === '') return 'inline-flex min-w-9 h-7 items-center justify-center rounded bg-slate-500/10 text-slate-400 text-[10px] font-black px-1';
+      const num = Number(total);
+      if (num <= DEFAULT_SUPPLY_SETTINGS.lowMax) return 'inline-flex min-w-9 h-7 items-center justify-center rounded bg-red-500/20 text-red-500 text-[10px] font-black px-1';
+      if (num >= DEFAULT_SUPPLY_SETTINGS.highMin) return 'inline-flex min-w-9 h-7 items-center justify-center rounded bg-emerald-500/20 text-emerald-500 text-[10px] font-black px-1';
+      return 'inline-flex min-w-9 h-7 items-center justify-center rounded bg-amber-500/20 text-amber-500 text-[10px] font-black px-1';
+    }
+
+    function Header({ user, isDark, theme, onToggleTheme, onLogout }) {
+      return (
+        <header className={isDark ? 'sticky top-0 z-30 bg-[#020617]/80 backdrop-blur-xl border-b border-white/10' : 'sticky top-0 z-30 bg-slate-100/80 backdrop-blur-xl border-b border-slate-200'}>
+          <div className="max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
+            <div>
+              <div className="flex items-center gap-2 mb-1">
+                <div className={`w-9 h-9 rounded-2xl flex items-center justify-center ${isDark ? 'bg-white text-slate-950' : 'bg-slate-950 text-white'}`}>
+                  <Icon name="spark" className="w-5 h-5" />
+                </div>
+                <h1 className="text-xl sm:text-2xl font-black tracking-tight">Management System</h1>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button onClick={onToggleTheme} className={iconButtonClass(isDark)}><Icon name={theme === 'dark' ? 'sun' : 'moon'} className="w-5 h-5" /></button>
+              <button onClick={onLogout} className={iconButtonClass(isDark)}><Icon name="logout" className="w-5 h-5" /></button>
+            </div>
+          </div>
+        </header>
+      );
+    }
+
+    function MacDock({ isDark, activeMenu, setActiveMenu }) {
+      const menus = [
+        { key: 'dashboard', label: 'Matrices', icon: 'chart' },
+        { key: 'tasks', label: 'Tasks', icon: 'activity' },
+        { key: 'users', label: 'Users', icon: 'user' },
+        { key: 'profile', label: 'Profile', icon: 'settings' },
+      ];
+      return (
+        <nav className="fixed left-0 right-0 z-40 flex justify-center px-4 dock-pop" style={{ bottom: 'var(--dock-bottom)' }}>
+          <div className={(isDark ? 'dock-glass-dark border-white/15' : 'dock-glass-light border-white') + ' border shadow-2xl rounded-[2rem] px-3 py-3 flex items-end gap-2'}>
+            {menus.map(m => {
+              const active = activeMenu === m.key;
+              return (
+                <button key={m.key} onClick={() => setActiveMenu(m.key)} className={`group relative flex flex-col items-center justify-center rounded-3xl transition-all duration-300 shrink-0 ${active ? (isDark ? 'w-20 h-20 bg-white text-slate-950 -translate-y-3 shadow-xl' : 'w-20 h-20 bg-slate-950 text-white -translate-y-3 shadow-xl') : (isDark ? 'w-16 h-16 bg-white/10 text-white/70 hover:bg-white/15 hover:-translate-y-2' : 'w-16 h-16 bg-slate-950/5 text-slate-600 hover:bg-slate-950/10 hover:-translate-y-2')}`}>
+                  <Icon name={m.icon} className={active ? 'w-7 h-7' : 'w-6 h-6'} />
+                  <span className={`text-[10px] font-black mt-1 ${active ? 'opacity-100' : 'opacity-70'}`}>{m.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </nav>
+      );
+    }
+
+    function Input({ isDark, label, value, onChange, type = 'text', disabled = false }) {
+      return (
+        <div>
+          {label && <label className={`block text-xs font-bold mb-1.5 ${isDark ? 'text-white/60' : 'text-slate-500'}`}>{label}</label>}
+          <input type={type} value={value} disabled={disabled} onChange={e => onChange(e.target.value)} className={inputClass(isDark, disabled)} />
+        </div>
+      );
+    }
+
+    function Textarea({ isDark, label, value, onChange }) {
+      return (
+        <div>
+          {label && <label className={`block text-xs font-bold mb-1.5 ${isDark ? 'text-white/60' : 'text-slate-500'}`}>{label}</label>}
+          <textarea value={value} rows={3} onChange={e => onChange(e.target.value)} className={isDark ? 'w-full rounded-2xl bg-white/10 border border-white/10 text-white px-4 py-3 outline-none focus:ring-2 focus:ring-white/30 resize-none' : 'w-full rounded-2xl bg-white border border-slate-200 text-slate-950 px-4 py-3 outline-none focus:ring-2 focus:ring-slate-300 resize-none'}></textarea>
+        </div>
+      );
+    }
+
+    function Select({ isDark, label, value, onChange, options }) {
+      return (
+        <div>
+          {label && <label className={`block text-xs font-bold mb-1.5 ${isDark ? 'text-white/60' : 'text-slate-500'}`}>{label}</label>}
+          <select value={value} onChange={e => onChange(e.target.value)} className={inputClass(isDark)}>
+            {options.map(o => <option key={o.value} value={o.value} className={isDark ? 'bg-slate-900' : 'bg-white'}>{o.label}</option>)}
+          </select>
+        </div>
+      );
+    }
+
+    function ResponsiveTable({ isDark, headers, rows, emptyText }) {
+      if (!rows.length) return <div className="text-center py-10 opacity-50">{emptyText}</div>;
+      return (
+        <div className="overflow-x-auto custom-scroll border border-white/5 rounded-2xl">
+          <table className="w-full text-sm text-left">
+            <thead className={isDark ? 'bg-white/5 border-b border-white/10' : 'bg-slate-50 border-b border-slate-200'}>
+              <tr>{headers.map(h => <th key={h} className="py-3 px-4 font-bold">{h}</th>)}</tr>
+            </thead>
+            <tbody>
+              {rows.map((row, i) => (
+                <tr key={i} className={isDark ? 'border-b border-white/5' : 'border-b border-slate-100'}>
+                  {row.map((cell, j) => <td key={j} className="py-3 px-4">{cell}</td>)}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
+    }
+
+    function ConfirmDialog({ dialog, isDark, onClose }) {
+      if (!dialog) return null;
+      return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4 bg-black/50 backdrop-blur-sm">
+          <div className={cardClass(isDark) + ' w-full max-w-sm rounded-3xl p-6 modal-pop text-center'}>
+            <h3 className="text-xl font-black mb-2">{dialog.title}</h3>
+            <p className="opacity-70 mb-6 text-sm">{dialog.message}</p>
+            <div className="flex gap-3">
+              <button onClick={onClose} className={secondaryButtonClass(isDark) + ' flex-1'}>{dialog.cancelText}</button>
+              <button onClick={dialog.onConfirm} className={`h-11 px-5 rounded-2xl font-black flex-1 ${dialog.tone==='danger'?'bg-red-500 text-white':'bg-emerald-500 text-white'}`}>{dialog.confirmText}</button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function Toast({ toast, isDark }) {
+      if (!toast) return null;
+      return (
+        <div className="fixed top-6 right-6 z-50 toast-in">
+          <div className={`px-5 py-3 rounded-2xl font-bold shadow-xl ${toast.type==='success' ? 'bg-emerald-500 text-white' : 'bg-red-500 text-white'}`}>
+            {toast.text}
+          </div>
+        </div>
+      );
+    }
+
+    function BackgroundGlow({ isDark }) {
+      return (
+        <div className="fixed inset-0 pointer-events-none overflow-hidden -z-10">
+          <div className={`absolute -top-24 -left-24 w-96 h-96 rounded-full blur-3xl ${isDark ? 'bg-blue-500/10' : 'bg-blue-300/20'}`}></div>
+          <div className={`absolute top-1/3 -right-24 w-96 h-96 rounded-full blur-3xl ${isDark ? 'bg-purple-500/10' : 'bg-purple-300/20'}`}></div>
+        </div>
+      );
+    }
+
+    function Icon({ name, className }) {
+      const icons = {
+        chart: <><path d="M3 3v18h18"/><path d="M7 16V9"/><path d="M12 16V5"/><path d="M17 16v-3"/></>,
+        activity: <><path d="M22 12h-4l-3 8-6-16-3 8H2"/></>,
+        user: <><path d="M20 21a8 8 0 0 0-16 0"/><circle cx="12" cy="7" r="4"/></>,
+        settings: <><path d="M12 15.5A3.5 3.5 0 1 0 12 8a3.5 3.5 0 0 0 0 7.5Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21a2 2 0 1 1-4 0v-.09A1.7 1.7 0 0 0 8.6 19.4a1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.6 8.6a1.7 1.7 0 0 0-.34-1.87l-.06-.06A2 2 0 1 1 7.03 3.84l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3a2 2 0 1 1 4 0v.09A1.7 1.7 0 0 0 15.4 4.6a1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9c.18.36.5.72 1 .9.33.12.7.1 1.1.1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.51 1Z"/></>,
+        spark: <><path d="M12 2 9.5 9.5 2 12l7.5 2.5L12 22l2.5-7.5L22 12l-7.5-2.5L12 2Z"/></>,
+        sun: <><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></>,
+        moon: <><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8Z"/></>,
+        logout: <><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></>
+      };
+      return <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">{icons[name] || icons.spark}</svg>;
+    }
+
+    function cardClass(isDark) { return isDark ? 'glass-dark border border-white/10 shadow-2xl' : 'glass-light border border-white shadow-xl'; }
+    function mutedClass(isDark) { return isDark ? 'text-sm text-white/50' : 'text-sm text-slate-500'; }
+    function inputClass(isDark, disabled=false) {
+      if(disabled) return isDark ? 'w-full h-10 rounded-xl bg-white/5 border border-white/10 px-3 outline-none opacity-50' : 'w-full h-10 rounded-xl bg-slate-100 border border-slate-200 px-3 outline-none opacity-50';
+      return isDark ? 'w-full h-10 rounded-xl bg-white/10 border border-white/10 text-white px-3 outline-none focus:border-white/30 transition' : 'w-full h-10 rounded-xl bg-white border border-slate-200 text-slate-900 px-3 outline-none focus:border-slate-400 transition';
+    }
+    function primaryButtonClass(isDark) { return isDark ? 'w-full h-10 rounded-xl bg-white text-slate-900 font-black hover:bg-slate-200 transition disabled:opacity-50' : 'w-full h-10 rounded-xl bg-slate-950 text-white font-black hover:bg-slate-800 transition disabled:opacity-50'; }
+    function secondaryButtonClass(isDark) { return isDark ? 'h-10 px-4 rounded-xl bg-white/10 border border-white/10 text-white font-black hover:bg-white/20 transition' : 'h-10 px-4 rounded-xl bg-white border border-slate-200 text-slate-700 font-black hover:bg-slate-50 transition'; }
+    function iconButtonClass(isDark) { return isDark ? 'w-10 h-10 rounded-xl bg-white/10 border border-white/10 text-white hover:bg-white/20 flex items-center justify-center transition' : 'w-10 h-10 rounded-xl bg-white border border-slate-200 text-slate-900 hover:bg-slate-50 flex items-center justify-center transition'; }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
